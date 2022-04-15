@@ -1,27 +1,27 @@
 # ConvertDigitalObjectToBalls
 
-* Installation
+# Installation
 
-** Requires cmake, DGtal, CGAL and Boost Graph libraries
+Requires cmake, DGtal, CGAL and Boost Graph libraries
 
-** Line commands:
+# Line commands:
 
-mkdir build
+1. mkdir build
 
-cd build/
+2. cd build/
 
-cmake ..
+3. cmake ..
 
-make
+4. make
 
 -------------------------
 
-* Usage
+# Usage
 
-** ./convertDigitalUoB ../data/toyData.pgm
+./convertDigitalUoB ../data/toyData.pgm
 
-** Option: -sub n
-          subsample the input image by a factor n in both dimensions
+Option: -sub n
+         subsample the input image by a factor n in both dimensions
 
 
 
