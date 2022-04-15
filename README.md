@@ -21,7 +21,7 @@ Requires cmake, DGtal, CGAL and Boost Graph libraries
 ./convertDigitalUoB ../data/toyData.pgm
 
 Option: -sub n
-         subsample the input image by a factor n in both dimensions
+         (subsample the input image by a factor n in both dimensions)
 
 
 
