@@ -2,7 +2,7 @@
 
 # Installation
 
-## Requires cmake, DGtal, CGAL and Boost Graph libraries
+Requires cmake, DGtal, CGAL and Boost Graph libraries
 
 ## Line commands:
 
