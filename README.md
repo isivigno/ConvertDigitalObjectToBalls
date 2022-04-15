@@ -2,9 +2,9 @@
 
 # Installation
 
-Requires cmake, DGtal, CGAL and Boost Graph libraries
+## Requires cmake, DGtal, CGAL and Boost Graph libraries
 
-# Line commands:
+## Line commands:
 
 1. mkdir build
 
