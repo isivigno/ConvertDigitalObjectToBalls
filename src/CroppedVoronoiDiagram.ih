@@ -1,0 +1,448 @@
+
+template <typename TKernel,typename TGraph>
+inline
+CroppedVoronoiDiagram<TKernel,TGraph>::~CroppedVoronoiDiagram()
+{
+  
+}
+
+template <typename TKernel,typename TGraph>
+inline
+CroppedVoronoiDiagram<TKernel,TGraph>::CroppedVoronoiDiagram(const CroppedVoronoiDiagram & other)
+{
+  myVD = other.myVD;
+  myP = other.myP;
+}
+
+
+template <typename TKernel,typename TGraph>
+inline
+CroppedVoronoiDiagram<TKernel,TGraph> & CroppedVoronoiDiagram<TKernel,TGraph>::operator=(const CroppedVoronoiDiagram & other)
+{
+  if(this != other)
+    {
+      myVD = other.myVD;
+      myP = other.myP;
+      // myCroppedVD = other.myCroppedVD;
+      // myVDGraph = other.myVDGraph;
+    }
+  
+  return *this; 
+}
+
+template <typename TKernel,typename TGraph>
+inline
+typename CroppedVoronoiDiagram<TKernel,TGraph>::Graph CroppedVoronoiDiagram<TKernel,TGraph>::getVDGraph()
+{
+  return myVDGraph;
+}
+
+
+template <typename TKernel,typename TGraph>
+inline
+void CroppedVoronoiDiagram<TKernel,TGraph>::initMap()
+{
+  //DGtal::trace.beginBlock("Init map");
+  int i=0;
+  for(typename VoronoiDiagram::Site_iterator si = myVD.sites_begin() ; si != myVD.sites_end() ; si++)
+    {
+      Point_2 p = *si;
+      //std::cout << p << " " << i << std::endl;
+      myMap.insert(std::make_pair(p,i));
+      i++;
+    }
+  //DGtal::trace.endBlock();
+  
+} 
+
+template <typename TKernel,typename TGraph>
+inline
+void CroppedVoronoiDiagram<TKernel,TGraph>::computeNeighbours()
+{
+  
+  // DGtal::trace.beginBlock("Compute neighbors");
+  //DGtal::trace.info() << "map size " << myMap.size() << std::endl;
+  //neighbours.reserve(myMap.size());
+
+  neighbours.resize(myMap.size(),std::vector<int>(10));
+  
+  
+  for(typename VoronoiDiagram::Face_iterator fi = myVD.faces_begin() ; fi != myVD.faces_end() ; fi++)
+    {
+      int ind = myMap.at(fi->dual()->point());
+      // std::cout << "face " << ind << std::endl;
+      
+      
+      
+      typename VoronoiDiagram::Face::Ccb_halfedge_circulator ec_start = fi->ccb();  typename VoronoiDiagram::Face::Ccb_halfedge_circulator ec = ec_start;
+      // for(typename VoronoiDiagram::Face::Ccb_halfedge_circulator  ei = fi->ccb() ; ei !=  fi->ccb() ; ei++)
+      //std::vector<int> neigh;
+      std::vector<int> list;
+      do
+	{
+	  Point_2 p = ec->twin()->face()->dual()->point();
+	  //std::cout << "neighbour " << p << std::endl;
+	  //fflush(stdout);
+	  //  neigh.push_back(myMap.at(p));
+	  //std::cout << neighbours[ind].size() << std::endl;
+
+	  list.push_back(myMap.at(p));
+	  // neighbours[ind].push_back(myMap.at(p));
+	  //std::cout << neighbours[ind].size() << std::endl;
+	}
+      while(++ec != ec_start);
+
+      for(auto const & el : list)
+	neighbours[ind].push_back(el);
+      //neighbours[ind] = list;
+      //neighbours[ind].insert(neighbours[ind].end(), list.begin(),list.end());
+      //std::cout << neighbours[ind].size() << std::endl;
+    }
+  // DGtal::trace.endBlock();
+  
+}
+
+
+
+
+
+
+template <typename TKernel,typename TGraph>
+inline
+std::vector<typename CroppedVoronoiDiagram<TKernel,TGraph>::Segment_2>  CroppedVoronoiDiagram<TKernel,TGraph>::getCroppedVoronoiDiagram()
+{
+  return myCroppedVD;
+}
+
+// intersection between a voronoi edge and the polygon defined as the digital set boundary cannot be a segment
+template <typename TKernel,typename TGraph>
+inline 
+void CroppedVoronoiDiagram<TKernel,TGraph>::intersectionSegmentPolygon(const Segment_2 & seg, const Polygon_2 & P, std::vector<Point_2> &inter)
+{
+  
+  // std::cout << "intersection seg/polyg\n";
+  Point_2 A;
+  for(typename Polygon_2::Edge_const_iterator ep = P.edges_begin() ; ep != P.edges_end() ; ep++)
+    {
+      Segment_2 segP = *ep;
+      typename CGAL::cpp11::result_of<typename Kernel::Intersect_2(Segment_2,Segment_2) >::type res = intersection(seg,segP);
+      if(res)
+	if (const Point_2* q = boost::get<Point_2>(&*res))
+	  {
+	    // std::cout << "intersection found - size of inter: " << inter.size() << std::endl;
+	    A = Point_2(q->x(),q->y());
+	    
+	    if(inter.size() == 0 || (inter.size() == 1 && (A != inter.front()))) // avoid doubles that occur when a segment intersects the polygon at a vertex.
+	      {
+		//   std::cout << "push back element " << q->x();
+		inter.push_back(A);
+	      }
+	    else
+	      if(inter.size()>1 && A != inter.front() && A != inter.back())
+		std::cout << "more than 2 intersection points\n";
+	  }
+      
+    }
+  
+}
+
+
+template <typename TKernel,typename TGraph>
+inline
+void CroppedVoronoiDiagram<TKernel,TGraph>::cropSegment(const Segment_2 & seg, const Polygon_2 & P, std::vector<Segment_2> & cropped)
+{
+  Point_2 p = seg.source();
+  Point_2 q = seg.target();
+
+  //std::cout << "\nCrop segment: " << p << " " << q << std::endl;
+  // if p or q is inside or on the polygon
+  if(!((P.oriented_side(p) == CGAL::ON_NEGATIVE_SIDE) && (P.oriented_side(q) == CGAL::ON_NEGATIVE_SIDE)))
+    {
+      //  std::cout << "p or q inside polygon\n";
+      std::vector<Point_2> inter;
+      intersectionSegmentPolygon(seg,P,inter);
+      int nb = inter.size();
+      // std::cout << "\t nb inter = " << nb << std::endl; 
+      
+      switch(nb)
+	{
+	case 0 :
+	  cropped.push_back(seg);
+	  break;
+	  
+	case 1 :
+	  if(P.oriented_side(p) == CGAL::ON_POSITIVE_SIDE && p != inter[0])
+	    cropped.push_back(Segment_2(p,inter[0]));
+	  else
+	    if(P.oriented_side(q) == CGAL::ON_POSITIVE_SIDE && q != inter[0])
+	      cropped.push_back(Segment_2(q,inter[0]));
+	  break;
+	  
+	case 2 :
+	  if((inter[0]==p && inter[1]==q) || (inter[0]==q && inter[1]==p))
+	    {
+	      typename TKernel::Construct_midpoint_2 constr_midpoint;
+	      Point_2 mid = constr_midpoint(p,q);
+	      if(!(P.oriented_side(mid) == CGAL::ON_NEGATIVE_SIDE))
+		cropped.push_back(seg);
+	    }
+	  else
+	    if(inter[0] != p && inter[0] != q && inter[1] != p && inter[1] != q)
+	      {
+		typename TKernel::Compute_squared_distance_2 squared_distance;
+		if(squared_distance(p,inter[0]) < squared_distance(p,inter[1]))
+		  {
+		    cropped.push_back(Segment_2(p,inter[0]));
+		    cropped.push_back(Segment_2(q,inter[1]));
+		  }
+		else
+		  {
+		    cropped.push_back(Segment_2(p,inter[1]));
+		    cropped.push_back(Segment_2(q,inter[0]));
+		  }
+	      }
+	    else
+	      // p or q is an intersection point
+	      {
+		if(p == inter[0] || p == inter[1])
+		  {
+		    if(p==inter[1])
+		      {
+			if(P.oriented_side(q) == CGAL::ON_NEGATIVE_SIDE && p != inter[0])
+			  cropped.push_back(Segment_2(p,inter[0]));
+			else
+			  if(q != inter[0])
+			    cropped.push_back(Segment_2(q,inter[0]));
+		      }
+		    else
+		      {
+			if(P.oriented_side(q) == CGAL::ON_NEGATIVE_SIDE && p != inter[1])
+			  cropped.push_back(Segment_2(p,inter[1]));
+			else
+			  if(q != inter[1])
+			    cropped.push_back(Segment_2(q,inter[1]));
+		      }
+		  }
+		else // q is an intersection point
+		  if(q==inter[1])
+		    {
+		      if(P.oriented_side(p) == CGAL::ON_NEGATIVE_SIDE && q != inter[0])
+			cropped.push_back(Segment_2(q,inter[0]));
+		      else
+			if(p != inter[0])
+			  cropped.push_back(Segment_2(p,inter[0]));
+		    }
+		  else
+		    {
+		      assert(q==inter[0]);
+		      if(P.oriented_side(p) == CGAL::ON_NEGATIVE_SIDE && q != inter[1])
+			cropped.push_back(Segment_2(q,inter[1]));
+		      else
+			if(p != inter[1])
+			  cropped.push_back(Segment_2(p,inter[1]));
+		    }
+	      }
+	  break;
+	default :
+	  std::cout << "more than 2 intersection points\n";
+	  break;
+	  
+	}
+    }
+  //else
+  //std::cout << "p and q are outside\n";
+
+  
+  
+}
+
+template <typename TKernel,typename TGraph>
+inline
+bool CroppedVoronoiDiagram<TKernel,TGraph>::computeSegFromHalfedge(const typename VoronoiDiagram::Halfedge & e, const Iso_rectangle_2 & R, Segment_2 & seg)
+{
+  // Point_2 A,B;
+  if(e.is_segment())
+    {
+      //std::cout << "already a segment\n";
+      seg = Segment_2(e.source()->point(), e.target()->point());
+    }
+  else
+    {
+      if(e.is_ray())
+	{
+	  //std::cout << "\nCompute segment from ray\n";
+	  // Intersect the ray with the polygon bounding box to get a segment
+	  Ray_2 ray;
+	  typename VoronoiDiagram::Halfedge ee;
+	  if(e.has_source())
+	    ee = *(e.twin());
+	  else
+	    ee = e;
+	  Point_2 pp=ee.target()->point();
+	  
+	  Point_2 q = ee.up()->point();
+	  Point_2 p = ee.down()->point();
+	  Line_2 l = CGAL::bisector(p,q);
+	  ray = Ray_2(pp,l);
+	  
+	  //std::cout << "Ray: " << ray.source() << " " << ray.point(1) << " bounding box: " << R << std::endl;
+	  // define rectangle from polygon bounding box
+	  
+	  typename CGAL::cpp11::result_of<typename Kernel::Intersect_2(Iso_rectangle_2,Ray_2) >::type res1 = intersection(R,ray);
+	  
+	  if(res1)
+	    {
+	      if (const Segment_2* s = boost::get<Segment_2>(&*res1))
+		// intersection between ray and bounding box shouldn't be nothing else than a segment.
+		{
+		  //std::cout << "segment from halfedge : " << s->source() << s->target() << std::endl;
+		  seg = Segment_2(s->source(),s->target());
+		  //  std::cout << seg << std::endl;
+		}
+	      else
+		std::cout << "intersection between ray and bb is not a segment !!\n";
+	    }
+	  else
+	    {
+	      // std::cout << "No intersection with bb\n";
+	      return false;
+	    }
+	}
+    }
+  return true;
+}
+
+
+
+template <typename TKernel,typename TGraph>
+inline
+CroppedVoronoiDiagram<TKernel,TGraph>::CroppedVoronoiDiagram(const VoronoiDiagram & VD, const Polygon_2 & P)
+{
+  // typename VoronoiDiagram::Edge_iterator ei = VD.edges_begin();
+  //typename VoronoiDiagram::Edge_iterator ei_end = VD.edges_end();
+
+  DGtal::trace.beginBlock("Compute cropped VD");
+  
+  myVD = VD;
+  
+  initMap();
+  computeNeighbours();
+
+  croppedFaces.reserve(myMap.size());
+  
+
+  int nbseg = 0,nbray = 0;;
+  for(typename VoronoiDiagram::Edge_iterator ei = myVD.edges_begin() ; ei != myVD.edges_end() ; ei++)
+    {
+      // Useless
+      // int faceIndex1 = myMap.at(ei->face()->dual()->point());
+      // std::cout << "face index: " << faceIndex1 << std::endl;
+      // int faceIndex2 = myMap.at(ei->twin()->face()->dual()->point());
+      // std::cout << "face index: " << faceIndex2 << std::endl;
+
+      Point_2 site = ei->face()->dual()->point();
+
+      
+      std::vector<Segment_2> cropped;
+      if(ei->is_segment())
+	{
+	  nbseg++;
+	  Point_2 p = ei->source()->point(), q = ei->target()->point();  
+	  Segment_2 seg(p,q);
+
+	  if(p != q)
+	    cropSegment(seg,P,cropped);
+	}
+      else
+	{
+	  // ei is a ray
+	  nbray++;
+	  Iso_rectangle_2 R(Point_2(P.bbox().xmin(),P.bbox().ymin()),Point_2(P.bbox().xmax(),P.bbox().ymax()));
+	  Segment_2 seg;
+	  bool res = computeSegFromHalfedge(*ei,R,seg);
+	  if(res)
+	    if(seg.source() != seg.target())
+	      cropSegment(seg,P,cropped);
+	}
+
+
+      
+      myCroppedVD.insert(myCroppedVD.end(),cropped.begin(),cropped.end());
+
+      for(auto const & el : cropped)
+	{
+	  myCroppedVD2.push_back(std::make_pair(el,site));
+	}
+      
+    }
+  
+  
+  std::cout << "number of segments:" << nbseg << std::endl;
+  std::cout << "number of rays:" << nbray << std::endl;
+  
+  DGtal::trace.endBlock();
+  
+}
+
+
+
+template <typename TKernel,typename TGraph>
+inline
+void CroppedVoronoiDiagram<TKernel,TGraph>::computeGraph()
+{
+  DGtal::trace.beginBlock("Compute graph from VD");
+  
+  for(auto const & s : myCroppedVD2)
+    {
+      Point_2 p = s.first.source(), q = s.first.target();
+      Point_2 site = s.second;
+      Vertex_t u,v;
+
+      auto foundp = mapGraphVertices.find(p);
+      auto foundq = mapGraphVertices.find(q);
+      
+      if(foundp != mapGraphVertices.end())
+	u = foundp->second; //mapGraphVertices.at(p);
+      else
+	{
+	  u = add_vertex(typename Graph::vertex_property_type{p,site},myVDGraph);
+	  mapGraphVertices.insert(std::make_pair(p,u));
+	}
+      
+      if(foundq != mapGraphVertices.end())
+	v = foundq->second; //mapGraphVertices.at(q);
+      else
+	{
+	  v = add_vertex(typename Graph::vertex_property_type{q,site},myVDGraph);
+	  mapGraphVertices.insert(std::make_pair(q,v));
+	}
+      
+      Edge_t e = add_edge(u,v,myVDGraph).first;
+    }
+
+  DGtal::trace.endBlock();
+  
+}
+
+
+template <typename TKernel,typename TGraph>
+inline
+void CroppedVoronoiDiagram<TKernel,TGraph>::drawVDGraph(DGtal::Board2D & board)
+{
+  double x1, x2, y1, y2;
+  typename Graph::edge_iterator fst, lst;
+  board.setPenColor( DGtal::Color::Green );
+  for(boost::tie(fst, lst) = edges(myVDGraph); fst != lst; ++fst)
+    {
+      //reccupère les cordonnées des sommets de chaque arête
+      //x1=(g[boost::source(*fst, g)].id)[0];y1=(g[boost::source(*fst, g)].id)[1];
+      //x2=(g[boost::target(*fst, g)].id)[0];y2=(g[boost::target(*fst, g)].id)[1];
+      
+      Point_2 p = myVDGraph[boost::source(*fst, myVDGraph)].id;
+      Point_2 q = myVDGraph[boost::target(*fst, myVDGraph)].id;
+      
+      board.drawLine(p.x().floatValue(),p.y().floatValue(),q.x().floatValue(),q.y().floatValue());
+    }
+
+
+}

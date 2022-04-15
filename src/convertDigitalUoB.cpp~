@@ -1,0 +1,1171 @@
+
+#include <iostream>
+#include "DGtal/base/Common.h"
+#include "DGtal/base/IteratorCirculatorTraits.h"
+#include "DGtal/helpers/StdDefs.h"
+#include "DGtal/geometry/tools/Hull2DHelpers.h"
+#include "DGtal/geometry/tools/PolarPointComparatorBy2x2DetComputer.h"
+#include "DGtal/geometry/tools/determinant/AvnaimEtAl2x2DetSignComputer.h"
+#include "DGtal/geometry/tools/determinant/InHalfPlaneBySimple3x3Matrix.h"
+#include "DGtal/shapes/ShapeFactory.h"
+#include "DGtal/shapes/Shapes.h"
+#include "DGtal/topology/DigitalSetBoundary.h"
+#include "DGtal/topology/DigitalSurface.h"
+#include "DGtal/graph/DepthFirstVisitor.h"
+#include "DGtal/io/boards/Board2D.h"
+
+// Part I
+
+#include "DGtal/io/readers/GenericReader.h"
+#include "DGtal/io/writers/GenericWriter.h"
+#include <DGtal/io/boards/Board2D.h>
+#include "DGtal/images/imagesSetsUtils/SetFromImage.h"
+
+#include "DGtal/kernel/BasicPointFunctors.h"
+#include "DGtal/images/ConstImageAdapter.h"
+#include "DGtal/shapes/implicit/ImplicitBall.h"
+
+
+// Part III
+#include "DGtal/geometry/volumes/distance/VoronoiMap.h"
+
+#include "DGtal/io/colormaps/GradientColorMap.h"
+#include "DGtal/geometry/volumes/distance/DistanceTransformation.h"
+#include <boost/algorithm/minmax.hpp>
+#include <boost/algorithm/minmax_element.hpp>
+#include <boost/graph/adjacency_list.hpp>
+
+#include <boost/graph/topological_sort.hpp>
+#include <math.h>
+#include <string>
+
+
+#include <DGtal/geometry/volumes/distance/ExactPredicateLpPowerSeparableMetric.h>
+
+//#include "Ball.h"
+
+#include "PowerMapZero.h"
+
+
+#include <CGAL/Exact_predicates_exact_constructions_kernel_with_sqrt.h>
+
+#include <CGAL/constructions_d.h>
+
+
+//#include <CGAL/Boolean_set_operations_2.h>
+//#include "/Users/siviigni/Code/Balls/UnionOfBalls/src/ConnectedUnionOfDisks.h"
+//#include "/Users/siviigni/Code/Balls/UnionOfBalls/src/helpers.h"
+//#include "/Users/siviigni/Code/Balls/UnionOfBalls/src/UnionOfDisks.h"
+
+//#include "ConnectedUnionOfDisks.h"
+
+#include <DGtal/shapes/Shapes.h>
+
+#include "CroppedVoronoiDiagram.h"
+
+#include "utils.h"
+
+
+using namespace DGtal;
+using namespace std;
+
+//#define SUBSAMP 6
+
+
+
+template <typename TKernel, typename DigitalSet>
+DigitalSet digitize(const CGAL::Circle_2<TKernel> & b)
+{
+  typename TKernel::Point_2 c = b.center();
+  typename TKernel::FT rr = b.squared_radius();
+  
+  double rr1 = rr.floatValue();
+  Z2i::Point cc(c.x().floatValue(),c.y().floatValue());
+
+  CGAL::Bbox_2 boudingbox = b.bbox(); 
+  
+  typename DigitalSet::Domain domain(Z2i::Point(floor(cc[0]-sqrt(rr1)),floor(cc[1]-sqrt(rr1))), Z2i::Point(ceil(cc[0]+sqrt(rr1)),ceil(cc[1]+sqrt(rr1))));
+  
+  DigitalSet digit(domain);
+  
+  for(auto const &p : domain)
+    {
+      typename TKernel::Point_2 pp(p[0],p[1]);
+      // if(DGtal::Z2i::l2PowerMetric.exactDistanceRepresentation(p,c) <= rr)
+      if(b.has_on_positive_side(pp) /*|| b.has_on_boundary(pp)*/) // open ball
+	digit.insert(p);
+      //if(CGAL::squared_distance(pp,c) <= rr)
+	// if(DGtal::Z2i::l2Metric.rawDistance(p,c) <= rr)
+	//digit.insert(p);
+    }
+  return digit;
+}
+
+// template <typename DirectedGraph>
+// Ball<Z2i::Space> ballFromVertex(const typename DirectedGraph::vertex_descriptor & el, const DirectedGraph &dag)
+// {
+  
+//   Z2i::Point c(dag[el].id.x().floatValue(),dag[el].id.y().floatValue());
+//   Z2i::Point site(dag[el].site.x().floatValue(),dag[el].site.y().floatValue());
+  
+//   Z2i::L2Metric l2;
+//   Z2i::Integer squaredR =  l2.rawDistance(c,site);
+  
+//   Ball<Z2i::Space> b(c,squaredR);
+//   return b;
+// }
+
+
+// Computes the circle corresponding to a vertex of the dag. 
+template <typename  TKernel, typename DirectedGraph>
+typename CGAL::Circle_2<TKernel> circleFromVertex(const typename DirectedGraph::vertex_descriptor & el, const DirectedGraph &dag)
+{
+  typename TKernel::Point_2 c(dag[el].id); // retrieve the center coordinates
+  typename TKernel::Point_2 site(dag[el].site); // retrieve a closest site coordinates
+
+  // compute the (reduced) radius
+  //typename TKernel::FT squaredR = prev<typename TKernel::FT>(CGAL::squared_distance(c,site));
+
+  // compute the radius
+  typename TKernel::FT squaredR = CGAL::squared_distance(c,site); 
+   
+  return CGAL::Circle_2<TKernel>(c,squaredR);
+}
+  
+
+
+template <typename  TKernel, typename DirectedGraph>
+void pencilFromVertex(const typename DirectedGraph::vertex_descriptor & el, const DirectedGraph &dag, typename CGAL::Circle_2<TKernel> & b1, typename CGAL::Circle_2<TKernel> &b2)
+{
+  b1 = circleFromVertex<TKernel,DirectedGraph>(el,dag);
+  typename DirectedGraph::adjacency_iterator ibegin, iend;
+  typename DirectedGraph::vertex_descriptor desc;
+  for (boost::tie(ibegin, iend) = boost::adjacent_vertices(el, dag); ibegin != iend; ++ibegin)
+    {
+      desc = *ibegin;
+    }
+  if(desc == el)
+    b2 = b1;
+  else
+    {
+      b2 = circleFromVertex<TKernel,DirectedGraph>(desc,dag);
+    }
+}
+
+
+
+template <typename  TKernel, typename DirectedGraph>
+void pencilFromEdge(const typename DirectedGraph::edge_descriptor & el, const DirectedGraph &dag, typename CGAL::Circle_2<TKernel> & b1, typename CGAL::Circle_2<TKernel> &b2)
+{
+  typename DirectedGraph::vertex_descriptor vb1 = boost::source(el,dag);
+  typename DirectedGraph::vertex_descriptor vb2 = boost::target(el,dag);
+
+  b1 = circleFromVertex<TKernel,DirectedGraph>(vb1,dag);
+  b2 = circleFromVertex<TKernel,DirectedGraph>(vb2,dag);
+  
+  // b1 = circleFromVertex<TKernel,DirectedGraph>(el,dag);
+  // typename DirectedGraph::adjacency_iterator ibegin, iend;
+  // typename DirectedGraph::vertex_descriptor desc;
+  // for (boost::tie(ibegin, iend) = boost::adjacent_vertices(el, dag); ibegin != iend; ++ibegin)
+  //   {
+  //     desc = *ibegin;
+  //   }
+  // if(desc == el)
+  //   b2 = b1;
+  // else
+  //   {
+  //     b2 = circleFromVertex<TKernel,DirectedGraph>(desc,dag);
+  //   }
+}
+
+  
+
+template <typename TKernel>
+typename TKernel::FT power(const typename CGAL::Circle_2<TKernel> & b, const typename TKernel::Point_2 & x)
+{
+  typename TKernel::Point_2 c=b.center();
+  typename TKernel::FT r= b.squared_radius();
+  return (CGAL::squared_distance(c,x)-r);
+}
+
+
+// Given a point x and a pencil, compute the maximal ball of the pencil (lambda
+// value) that contains x on its boundary. Assumes that x belongs to b1, not to b2
+template <typename TKernel>
+typename TKernel::FT computeLambdaOfRepBall(const typename TKernel::Point_2 &x, const typename CGAL::Circle_2<TKernel> & b1, const typename CGAL::Circle_2<TKernel> & b2)
+{
+  typename TKernel::FT lambda = power(b1,x)/(power(b1,x)-power(b2,x));
+  return lambda;
+}
+
+
+
+
+// Given a lambda value and a pencil, compute the corresponding ball
+// (center + radius)
+template <typename TKernel>
+typename CGAL::Circle_2<TKernel> ballOnPencil(const typename TKernel::FT & lambda, const typename CGAL::Circle_2<TKernel> & b1, const typename CGAL::Circle_2<TKernel> & b2)
+{
+  typename TKernel::Point_2 c1 = b1.center(), c2 = b2.center();
+  typename TKernel::Point_2 c = CGAL::barycenter(c1,1-lambda,c2,lambda);
+  //typename TKernel::Point_2 c = (1-lambda)*c1 + lambda*c2;
+
+  typename TKernel::FT pow1 = power(b1, typename TKernel::Point_2(0,0));
+  typename TKernel::FT pow2 = power(b2, typename TKernel::Point_2(0,0));
+  
+  
+  typename TKernel::FT squaredR = CGAL::squared_distance(c,typename TKernel::Point_2(0,0)) - (1-lambda)*pow1 - lambda*pow2;
+
+  return typename CGAL::Circle_2<TKernel>(c,squaredR); 
+}
+
+
+
+// Given a point x and a pencil, compute an antecedent of the maximal
+// digital ball that contains x in its interior of the pencil. Assumes
+// that x belongs to b1, not to b2  
+template <typename TKernel, typename DigitalSet>
+typename TKernel::FT computeLambdaOfCriticalBall(const typename TKernel::Point_2 &x, const typename CGAL::Circle_2<TKernel> & b1, const typename CGAL::Circle_2<TKernel> & b2)
+{
+  // compute Rep ball of x (supremum of all the balls that contain x)
+  typename TKernel::FT lambda = computeLambdaOfRepBall<TKernel>(x,b1,b2);
+  typename CGAL::Circle_2<TKernel> blambda = ballOnPencil<TKernel>(lambda,b1,b2);
+
+  //std::cout << "brep = " << blambda << std::endl;
+  
+  // compute the set of digital points in the ball
+  DigitalSet digitBall = digitize<TKernel,DigitalSet>(blambda);
+  DigitalSet digitBallb1 = digitize<TKernel,DigitalSet>(b1);
+  
+  
+
+  //  trace.info() << "track all points inside of rep ball :" << blambda << std::endl;
+  typename TKernel::FT lambdaMax= 0; 
+
+  // for all points in blambda but not in b1
+
+  for(auto const &p : digitBall)
+    {
+      if(!digitBallb1(p))
+	{
+	  typename TKernel::Point_2 pp(p[0],p[1]);
+	  //	  std::cout << pp << " ";
+	  typename TKernel::FT lambda1 = computeLambdaOfRepBall<TKernel>(pp,b1,b2);
+	  //std::cout  << ballOnPencil(lambda1,b1,b2) << std::endl;
+	  if(lambda1 < 1 && lambda1 > lambdaMax)
+	    lambdaMax = lambda1;
+	}
+    }
+
+  // std::cout << ballOnPencil<TKernel>(lambdaMax,b1,b2) << std::endl;
+  
+  // // for all points in b1 but not in blamdba
+  // for(auto const &p : digitBallb1)
+  //   {
+  //     if(!digitBall(p))
+  // 	{
+  // 	  typename TKernel::Point_2 pp(p[0],p[1]);
+  // 	  if(pp !=x)
+  // 	    {
+  // 	      //  std::cout << pp << " ";
+  // 	      typename TKernel::FT lambda1 = computeLambdaOfRepBall<TKernel>(pp,b1,b2);
+  // 	      //std::cout  << ballOnPencil(lambda1,b1,b2) << std::endl;
+  // 	      if(lambda1 > 0 && lambda1 > lambdaMax)
+  // 		lambdaMax = lambda1;
+  // 	    }
+  // 	}
+  //   }
+  // std::cout << lambda << lambdaMax << std::endl;
+
+  if(lambdaMax != lambda)
+    return (lambdaMax+lambda)/2;
+  else
+    return lambda/2;
+}
+
+
+template <typename Graph, typename DirectedGraph/*, typename RanksMap*/>
+//DirectedGraph directedGraphFromTree(const Graph &g, std::map<typename DirectedGraph::vertex_descriptor, int> &topologicalOrdering)
+DirectedGraph directedGraphFromTree(const Graph &g, std::vector<typename DirectedGraph::vertex_descriptor> &topologicalOrdering, std::vector<typename DirectedGraph::edge_descriptor> &topologicalOrderingEdges)
+{
+  trace.beginBlock("Compute dag from tree");
+  
+  DirectedGraph dag;
+  
+  typedef typename Graph::vertex_descriptor Vertex_t_g;
+  
+  typedef typename DirectedGraph::vertex_descriptor Vertex_t_dag;
+  typedef typename DirectedGraph::edge_descriptor Edge_t_dag;
+
+  //  std::map<Vertex_t_dag,int> rank;
+  int n = num_vertices(g);
+  
+  std::queue<std::pair<Vertex_t_g,Vertex_t_dag> > queue;
+
+  
+  int r = rand() % n;
+  typename Graph::vertex_iterator rootIt = vertices(g).first;
+  for(int i=0;i<r;i++)
+    {
+      rootIt++;
+    }
+  
+  // typename Graph::vertex_iterator rootIt = vertices(g).first;
+  // while(!(g[*rootIt].id.x() == 1.5 && g[*rootIt].id.y() == 1.5))
+  //   rootIt++;
+  
+  
+  
+  Vertex_t_g root = *rootIt;
+  
+  // Vertex_t_g root = *(vertices(g).first); // vertices(g) returns a pair of iterators to the beginning and the end of the list of graph vertices 
+  
+  //Point_2 p = g[root].id;
+    
+  Vertex_t_dag u_dag = add_vertex(typename DirectedGraph::vertex_property_type{g[root].id,g[root].site},dag);
+  
+  queue.push(std::make_pair(root,u_dag));
+
+  
+  //  topologicalOrdering.insert(std::make_pair(u_dag,n));
+  //  int k = n;
+  topologicalOrdering.push_back(u_dag);
+  // k--;
+  
+  std::cout << "root = " << g[root].id.x().floatValue() <<  " " << g[root].id.y().floatValue() << std::endl; //<< " + site = " << g[root].site.x().floatValue() << " " << g[root].site.y().floatValue() << std::endl;
+  
+  // Not efficient to find a point -> TODO : change for another data
+  // structure with O(1) find cost --> sorted_vector with
+  // std::lower_bound to find the element ??? 
+  std::vector<Vertex_t_g> tagged;
+  tagged.push_back(root);
+  
+  while(!queue.empty())
+    {
+      Vertex_t_g u_g = queue.front().first;
+      Vertex_t_dag u_dag = queue.front().second;
+      queue.pop();
+
+      // std::cout << g[u_g].id.x().floatValue() <<  " " << g[u_g].id.y().floatValue()<< std::endl;
+      
+      typename boost::graph_traits<Graph>::adjacency_iterator vi, vend;
+      for(boost::tie(vi, vend) = adjacent_vertices(u_g,g); vi != vend; ++vi)
+	{	  
+	  if(std::find(tagged.begin(), tagged.end(), *vi) == tagged.end())
+	    {
+	      // add a vertex in the dag
+	      // std::cout << g[*vi].id << std::endl;
+	      Vertex_t_dag vi_dag = add_vertex(typename DirectedGraph::vertex_property_type{g[*vi].id,g[*vi].site},dag);
+	      
+	      // add an oriented edge in the dag between vi_dag and u_dag
+	      //add_edge(vi_dag,u_dag,dag);
+	      
+	      std::pair<Edge_t_dag, bool> e = add_edge(vi_dag,u_dag,dag);
+	      // typename DirectedGraph::vertex_descriptor vv = boost::source(e.first,dag);
+	      // typename DirectedGraph::vertex_descriptor vu = boost::target(e.first,dag);
+	      // std::cout << dag[vv].id << " " << dag[vu].id << std::endl;
+	      
+	      // add the pair (vi,vi_dag) to the queue
+	      queue.push(std::make_pair(*vi,vi_dag));
+	      tagged.push_back(*vi);
+
+	      //set rank of vi_dag to k and decrement k
+	      // topologicalOrdering.insert(std::make_pair(vi_dag,n));
+	      topologicalOrdering.push_back(vi_dag);
+
+	      topologicalOrderingEdges.push_back(e.first);
+	      
+	      //k--;
+	    }
+	}
+      
+    }
+   
+  trace.endBlock();
+  return dag;
+}
+
+  
+
+int main( int argc, char** argv )
+{
+  
+  srand(time(0));
+  
+
+  if(argc !=2 )
+    {
+      std::cout << "Usage: " << argv[0] << " [input filename]\n" ;
+      return 0;
+    }
+
+  std::string imageFilename(argv[1]);
+
+  
+  //******** Part I: image -> Digital Set ********//
+
+  // 1. Define Image type and read image file
+  typedef DGtal::ImageContainerBySTLVector< DGtal::Z2i::Domain, unsigned char> Image2D;
+  typedef Image2D::Domain Domain;
+
+  /*La classe GenericReader permet d'importer automatiquement n'importe quelle image 
+  (2d, 3d, nd) à partir de son nom de fichier*/
+  Image2D image = DGtal::GenericReader<Image2D>::import(imageFilename); 
+     
+  
+  // 2. Define a domain, a digital set, and build a digital set from an image and a predicate (threshold values)
+   Image2D::Domain wholeDomain(image.domain().lowerBound()+Z2i::Point(-2,-2), image.domain().upperBound()+Z2i::Point(2,2)); 
+   
+   /*************************************************************/
+   // Optional: if the image is too big, use the following subsampling to work on a smaller one
+   // Subsample to twice smaller grid.
+
+#ifdef SUBSAMP
+   std::cout << "Subsample\n";
+   
+   std::vector<Image2D::Domain::Size> aGridSize2D(SUBSAMP,SUBSAMP);
+   DGtal::functors::BasicDomainSubSampler<Image2D::Domain> subSampler2D(wholeDomain, aGridSize2D, Z2i::Point(0 ,0));
+   
+   typedef ConstImageAdapter<Image2D,  Image2D::Domain, 
+			     functors::BasicDomainSubSampler<Image2D::Domain>,  
+			     Image2D::Value,
+			     functors::Identity > SubsampledImage;
+   
+   functors::Identity df;
+   // Get the new domain produces from the subsampler and define the ConstImageAdapter:
+   Image2D::Domain subSampledDomain2D  = subSampler2D.getSubSampledDomain();
+   SubsampledImage subsampledImage2D (image, subSampledDomain2D, subSampler2D, df);
+   
+   GenericWriter<SubsampledImage>::exportFile("subsampled.pgm", subsampledImage2D );
+
+#endif
+
+#ifdef  SUBSAMP
+   Image2D::Domain domain(subSampledDomain2D.lowerBound()+Z2i::Point(-2,-2),subSampledDomain2D.upperBound()+Z2i::Point(2,2));
+#else
+   Image2D::Domain domain(wholeDomain.lowerBound()+Z2i::Point(-2,-2), wholeDomain.upperBound()+Z2i::Point(2,2));
+#endif
+   
+
+   
+   // 2. Define a domain, a digital set, and build a digital set from an image and a predicate (threshold values)
+
+   typedef Z2i::DigitalSet DigitalSet;
+   DigitalSet mySet(domain);
+   typedef Z2i::Point Point;
+   
+#ifdef SUBSAMP
+   SetFromImage<DigitalSet>::append<SubsampledImage>(mySet, subsampledImage2D, 0,255);
+#else   
+   SetFromImage<DigitalSet>::append<Image2D>(mySet, image, 0, 255);
+#endif
+
+   
+   
+   // 3. EPS output of the digital set (using Board2D)
+   Board2D board;
+      
+   board << domain;
+   board << mySet;
+   board.saveEPS("digitalSet.eps");
+   
+
+   // 1. Choose an adjacency, define a Digital Object and initialize it with the digital set;
+
+   typedef Z2i::Object4_8 DigitalObject;
+   DigitalObject myObject(Z2i::dt4_8,mySet);
+
+   vector<DigitalObject> objects;
+   back_insert_iterator< vector<DigitalObject> > it( objects );
+   myObject.writeComponents( it ); 
+
+   int maxInd = 0;
+   int j = 0;
+   for(auto const & o : objects)
+     {
+       if(o.size() > objects[maxInd].size())
+	 maxInd = j;
+       j++;
+     }
+
+   DigitalObject obj(objects[maxInd]);
+   
+   
+   /*************** Compute set of enclosing balls ***********************/
+   // Compute the set of points not in the digital set and $4$ connected to it.
+   
+   DigitalSet complementSet(domain);
+   
+   for(auto const &p : domain)
+     {
+       if(!((obj.pointSet())(p)))
+	 complementSet.insert(p);
+     }
+
+   typename DigitalObject::ComplementObject complement(Z2i::dt8_4,complementSet);
+   
+   typename DigitalObject::ComplementObject border = complement.border();
+
+
+   board.clear();
+   board << domain;
+   board << border;
+   board.saveEPS("outBorder.eps");
+   
+   
+   // Compute the voronoi diagram of the out border --> use CGAL
+
+   typedef CGAL::Exact_predicates_exact_constructions_kernel_with_sqrt Kernel;
+   typedef CGAL::Delaunay_triangulation_2<Kernel>                                    DT;
+   typedef CGAL::Delaunay_triangulation_adaptation_traits_2<DT>                 AT;
+   typedef CGAL::Identity_policy_2<DT,AT> AP; // adaptation policy --> here keep everything
+   typedef CGAL::Voronoi_diagram_2<DT,AT,AP>                                    VoronoiD;
+
+   typedef CGAL::Polygon_2<Kernel> Polygon_2;
+   typedef typename Kernel::Point_2 Point_2;
+   typedef CGAL::Circle_2<Kernel> Circle_2;
+   
+   VoronoiD voronoi;
+   
+   for(auto const &p : border)
+     {
+       typename VoronoiD::Site_2 s = Kernel::Point_2(p[0],p[1]);
+       voronoi.insert(s);
+     }
+
+   board.clear();
+   board << domain;
+   board << obj;
+   board.setPenColor( DGtal::Color::Red );
+   int i = 0;
+   for(VoronoiD::Edge_iterator ei = voronoi.edges_begin() ; ei != voronoi.edges_end() ; ei++)
+     {
+       if(ei->is_segment())
+	 {
+	   i++;
+	   typename VoronoiD::Point_2 p = ei->source()->point(), q = ei->target()->point();  
+	   board.drawLine(p.x().floatValue(),p.y().floatValue(),q.x().floatValue(),q.y().floatValue());
+	 }
+     }
+   board.saveEPS("voronoi.eps");
+   std::cout << "number of voronoi segments = " << i << std::endl;
+   
+   
+   // Compute boundary of the set --> used to crop the Voronoi diagram
+
+   std::cout << std::endl ; trace.beginBlock("Compute polygon used to crop VD");
+   Z2i::KSpace ks;
+   ks.init(domain.lowerBound(), domain.upperBound(),false);
+   
+   SurfelAdjacency<2> sAdj(true);
+   
+   std::vector< std::vector<Z2i::KSpace::SCell> > SCellContours;
+   std::vector<std::vector<Z2i::Point>> PointsContours;
+   try
+     {
+       // Surfaces<Z2i::KSpace>::extractAll2DSCellContours(SCellContours, ks, sAdj, obj.pointSet());
+       Surfaces<Z2i::KSpace>::extractAllPointContours4C(PointsContours, ks, obj.pointSet(), sAdj);
+     }
+   catch(DGtal::InputException i)
+     {
+       trace.emphase() << "could not find a starting bel" << std::endl;
+     }
+   
+      
+
+  // Compute polygon used to crop the VD
+  Polygon_2 P;
+  
+  std::vector<Z2i::Point> contour = PointsContours[0];
+  
+  for(auto const & p : contour)
+    P.push_back(Point_2(p[0]-0.5,p[1]+0.5));
+
+  trace.endBlock();
+  
+  board.clear();
+  board << domain;
+  board << obj;
+  board.setPenColor( DGtal::Color::Red );
+  for(Polygon_2::Edge_const_iterator ei = P.edges_begin(); ei != P.edges_end() ; ei++)
+    {
+      typename Polygon_2::Segment_2 seg = *ei;
+      //std::cout << seg <<  std::endl;
+      board.drawLine(seg[0].x().floatValue(),seg[0].y().floatValue(),seg[1].x().floatValue(),seg[1].y().floatValue());
+    }
+
+  board.saveEPS("polygon.eps");
+  
+  //*************** Compute cropped Voronoi diagram and its graph *****************//
+
+  std::cout << std::endl ; trace.beginBlock("Compute cropped VD + graph");
+
+  // Define graph type
+  struct VertexProperty 
+  { 
+    Point_2 id;
+    Point_2 site; // site closest to the vertex geometric embedding --> enables to retrieve the maximal ball radius. 
+  };
+
+
+  // Define graph type
+  struct EdgeProperty 
+  {
+    std::set<typename Kernel::FT> listCriticalLambdas;
+  };
+  
+   
+  typedef boost::adjacency_list<boost::setS, boost::vecS, boost::undirectedS, VertexProperty, EdgeProperty> Graph;
+  typedef typename boost::graph_traits<Graph>::vertex_descriptor Vertex_t;
+  typedef typename boost::graph_traits<Graph>::edge_descriptor Edge_t;
+  
+  CroppedVoronoiDiagram<Kernel,Graph> CroppedVD(voronoi, P);
+  
+  std::vector<typename Polygon_2::Segment_2> croppedVD = CroppedVD.getCroppedVoronoiDiagram();
+  
+
+  CroppedVD.computeGraph();
+
+  trace.endBlock();
+
+
+  
+  board.clear();
+  board << domain;
+  board << obj;
+  board.setPenColor( DGtal::Color::Red );
+  for(auto const & seg : croppedVD)
+    board.drawLine(seg[0].x().floatValue(),seg[0].y().floatValue(),seg[1].x().floatValue(),seg[1].y().floatValue());
+  
+  board.saveEPS("croppedVD.eps");
+  
+
+  
+  board.clear();
+  board << domain ;
+  board << mySet;
+  CroppedVD.drawVDGraph(board);
+  board.saveEPS("VDGraph.eps");
+
+  
+  
+   // //************* Compute topological ordering on VD vertices ********//
+
+  std::cout << std::endl ; trace.beginBlock("Compute topological ordering");
+  
+  typedef boost::adjacency_list<boost::setS, boost::vecS, boost::directedS, VertexProperty, EdgeProperty> DirectedGraph;
+   
+
+   std::vector<typename DirectedGraph::vertex_descriptor> topologicalOrdering;
+   
+   std::vector<typename DirectedGraph::edge_descriptor> topologicalOrderingEdges;
+
+   Graph g = CroppedVD.getVDGraph();
+
+   DirectedGraph dag = directedGraphFromTree<Graph,DirectedGraph>(g, topologicalOrdering,topologicalOrderingEdges);
+
+   trace.endBlock();
+
+   //************** Compute critical pencils *************************//
+
+   
+//    std::cout << std::endl ; trace.beginBlock("Compute critical pencils");
+
+// // compute for each point p of the object the ball which is the
+// // source of the pencil the critical ball of p belongs to.   
+   
+//    typedef ImageContainerBySTLVector<Domain, typename DirectedGraph::vertex_descriptor> CriticalPencils;
+//    CriticalPencils criticalPencils(domain);
+
+   
+//    i= topologicalOrdering.size()-1;
+//    // track the balls in topological order
+  
+//    for(std::vector<typename DirectedGraph::vertex_descriptor>::reverse_iterator it = topologicalOrdering.rbegin() ; it != topologicalOrdering.rend() ; it++)
+//      {
+//        typename DirectedGraph::vertex_descriptor el = *it;
+       
+//        DirectedGraph::adjacency_iterator ibegin, iend;
+//        // std::cout << i << " -> " << dag[el].id << " ----> ";
+//        // for (boost::tie(ibegin, iend) = boost::adjacent_vertices(el, dag); ibegin != iend; ++ibegin)
+//        // 	 {
+//        // 	   std::cout <<  dag[*ibegin].id << std::endl;
+//        // 	 }
+
+//        i--;
+//        // retrieve ball center and radius from graph vertex
+//        Point_2 c(dag[el].id);
+//        Point_2 site(dag[el].site);
+
+//        // std::cout << "center = " << c << std::endl;
+//        //Circle_2 b(c,prev<typename Kernel::FT>(CGAL::squared_distance(c,site)));
+
+//        Circle_2 b(c,CGAL::squared_distance(c,site));
+
+//        // compute the set of digital points in the ball
+//        DigitalSet digitBall = digitize<Kernel,DigitalSet>(b);
+
+//        // for all these points, update the source of critical pencil
+//        for(auto const &pp : digitBall)
+// 	 {
+// 	   criticalPencils.setValue(pp,el); 
+// 	 }
+//      }
+
+//    trace.endBlock();
+
+   
+   //*************** Compute critical balls on critical pencils ********************//
+   
+   std::cout << std::endl ; trace.beginBlock("Compute ordered set of critical balls on critical pencils");
+
+   
+   // std::unordered_map<typename DirectedGraph::vertex_descriptor,std::set<typename Kernel::FT > > criticalBallsOnPencil;
+   // // map associating a vertex x (source of a critical pencil) to an ordered set of lambda values
+   // // corresponding to critical balls on the critical pencil 
+   
+
+   
+   std::vector<Circle_2> orderedCriticalBalls;
+
+   
+   typedef ImageContainerBySTLVector<Domain, Circle_2> CriticalBalls;
+   CriticalBalls criticalBalls(domain);
+
+
+   
+
+   // If critical lambda values could be stored as edges properties,
+   // parallelization would be possible. 
+
+   std::set<typename Kernel::FT> listCriticalLambdas;
+
+   int n = topologicalOrdering.size()-1;
+
+   i=0;
+   
+   for(std::vector<typename DirectedGraph::edge_descriptor>::reverse_iterator it = topologicalOrderingEdges.rbegin() ; it != topologicalOrderingEdges.rend() ; it++)
+     {
+       std::cout << i << "/" << n << "\r";
+       std::cout.flush();
+       i++;
+       
+
+       Circle_2 b1,b2,b;
+       pencilFromEdge<Kernel,DirectedGraph>(*it,dag,b1,b2);
+       //std::cout << b1.center() << " " << b2.center() << std::endl;
+       
+       // compute the set of digital points that are in the interior of b1 but
+       // not in the interior of b2. The points for which a critical
+       // ball may be found on the pencil [b1,b2] are among these points 
+       DigitalSet digitBall1 = digitize<Kernel,DigitalSet>(b1);
+       
+       // DigitalSet digitBall2(digitBall1.domain());
+       // if(b1 != b2)
+       // 	 digitBall2 = digitize<Kernel,DigitalSet>(b2);
+       
+       //if(b1 != b2)
+	 {
+	   
+	   DigitalSet digitBall2 = digitize<Kernel,DigitalSet>(b2);
+	   typename Kernel::FT lambda;
+	   for(auto const &p : digitBall1)
+	     {
+	       //    std::cout << p << std::endl;
+	       if(!digitBall2(p) /*&& criticalPencils(p)==*it*/)
+		 {
+		   //std::cout << "not in b2\n";
+		   // if(criticalPencils(p)!=*it)
+		   //std::cout << "not covered by b2 but b1 not source of critical pencil\n";
+		   Point_2 pp(p[0],p[1]);
+		   lambda = computeLambdaOfCriticalBall<Kernel,DigitalSet>(pp,b1,b2);
+		   
+		   if(lambda < 0 || lambda > 1)
+		     std::cerr <<  "Lambda out of [0,1] interval !\n";
+		   
+		   b = ballOnPencil<Kernel>(lambda,b1,b2); 		   
+		   
+		   criticalBalls.setValue(p,b);
+		   
+		   dag[*it].listCriticalLambdas.insert(lambda);
+		   //  std::cout << "   insert " << lambda << std::endl;
+		 }
+	     }
+	 }
+       // else
+       // 	 {
+       // 	   if(!digitBall1.empty())
+       // 	     {
+       // 	       dag[*it].listCriticalLambdas.insert(0);
+       // 	       for(auto const &p : digitBall1)
+       // 		 criticalBalls.setValue(p,b1);
+       // 	     }
+       // 	 }
+	 
+     }
+   
+   // for all the points in the root ball, set criticalBall to the right value = root ball
+   std::vector<typename DirectedGraph::edge_descriptor>::iterator itroot = topologicalOrderingEdges.begin();
+   
+   typename DirectedGraph::vertex_descriptor vroot = boost::target(*itroot,dag);
+   Circle_2 b = circleFromVertex<Kernel>(vroot,dag);
+   DigitalSet digit = digitize<Kernel,DigitalSet>(b);
+   for(auto const & p : digit)
+     criticalBalls.setValue(p,b);
+   
+   trace.endBlock();
+
+   trace.beginBlock("Compute optimal cover");
+   
+   DigitalSet unmarked(obj.pointSet());
+   std::vector<Circle_2> optimalCover;
+
+   i=0;
+   
+   for(std::vector<typename DirectedGraph::edge_descriptor>::reverse_iterator it = topologicalOrderingEdges.rbegin() ; it != topologicalOrderingEdges.rend() ; it++)
+     {
+       std::cout << i << "/" << n << "\r";
+       std::cout.flush();
+       i++;
+       
+       Circle_2 b1,b2,b;
+       pencilFromEdge<Kernel,DirectedGraph>(*it,dag,b1,b2);
+
+       for(std::set<Kernel::FT>::iterator itL = dag[*it].listCriticalLambdas.begin() ; itL  != dag[*it].listCriticalLambdas.end() ; itL++)
+	 {
+	   //std::cout << *itL << "  ";
+	   Circle_2 b = ballOnPencil<Kernel>(*itL,b1,b2);
+
+	   DigitalSet digit = digitize<Kernel,DigitalSet>(b);
+	   bool found = false;
+	   
+	   for(auto const & p : digit)
+	     {
+	       // std::cout << p << std::endl;
+	       if(unmarked(p) && b == criticalBalls(p))
+		 {
+		   found = true;
+		   optimalCover.push_back(b);
+		   // std::cout << b << std::endl;
+		   break;
+		 }
+	     }
+	   if(found) // a ball has been added, update unmarked set
+	     for(auto const & p : digit)
+	       if(unmarked(p))
+		 unmarked.erase(p);
+	   
+	   //  if(unmarked.size() !=0)
+	   //std::cout << *(unmarked.begin());
+	 }
+       //std::cout << std::endl;
+     }
+
+   // if unmarked points remain, add the root ball
+   if(unmarked.size() !=0)
+     {
+       std::cout << "unmarked vertices remain\n";
+       std::vector<typename DirectedGraph::edge_descriptor>::iterator it = topologicalOrderingEdges.begin();
+
+       typename DirectedGraph::vertex_descriptor vroot = boost::target(*it,dag);
+       Circle_2 b = circleFromVertex<Kernel>(vroot,dag);
+       optimalCover.push_back(b);
+       DigitalSet digit = digitize<Kernel,DigitalSet>(b);
+       for(auto const & p : digit)
+	 if(unmarked(p))
+	   unmarked.erase(p);
+       
+     }
+   
+   
+   std::cout << "number unmarked = " << unmarked.size() << std::endl;
+   std::cout << "Number of balls = " << optimalCover.size() << std::endl;
+
+   trace.endBlock();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+   
+   // //std::set<typename Kernel::FT> listCriticalLambdas;
+
+   
+   // int n = topologicalOrdering.size()-1;
+
+   // i=0;
+   
+   // for(std::vector<typename DirectedGraph::vertex_descriptor>::reverse_iterator it = topologicalOrdering.rbegin() ; it != topologicalOrdering.rend() ; it++)
+   //   {
+       
+   //     //std::cout << "vertex #" << i << std::endl;
+   //     std::cout << i << "/" << n << "\r";
+   //     std::cout.flush();
+   //     i++;
+       
+   //     listCriticalLambdas.clear();
+       
+   //     Circle_2 b1,b2,b;
+   //     pencilFromVertex<Kernel,DirectedGraph>(*it,dag,b1,b2);
+       
+   //     // compute the set of digital points that are in the interior of b1 but
+   //     // not in the interior of b2. The points for which a critical
+   //     // ball may be found on the pencil [b1,b2] are among these points 
+   //     DigitalSet digitBall1 = digitize<Kernel,DigitalSet>(b1);
+
+   //     // DigitalSet digitBall2(digitBall1.domain());
+   //     // if(b1 != b2)
+   //     // 	 digitBall2 = digitize<Kernel,DigitalSet>(b2);
+       
+   //     if(b1 != b2)
+   // 	 {
+	   
+   // 	   DigitalSet digitBall2 = digitize<Kernel,DigitalSet>(b2);
+   // 	   typename Kernel::FT lambda;
+   // 	   for(auto const &p : digitBall1)
+   // 	     {
+   // 	       //    std::cout << p << std::endl;
+   // 	       if(!digitBall2(p) /*&& criticalPencils(p)==*it*/)
+   // 		 {
+   // 		   //std::cout << "not in b2\n";
+   // 		   // if(criticalPencils(p)!=*it)
+   // 		   //std::cout << "not covered by b2 but b1 not source of critical pencil\n";
+   // 		   Point_2 pp(p[0],p[1]);
+   // 		   lambda = computeLambdaOfCriticalBall<Kernel,DigitalSet>(pp,b1,b2);
+		   
+   // 		   if(lambda < 0 || lambda > 1)
+   // 		     std::cerr <<  "Lambda out of [0,1] interval !\n";
+		   
+   // 		   b = ballOnPencil<Kernel>(lambda,b1,b2); 		   
+		   
+   // 		   criticalBalls.setValue(p,b);
+		   
+   // 		   listCriticalLambdas.insert(lambda);
+   // 		   //  std::cout << "   insert " << lambda << std::endl;
+   // 		 }
+   // 	     }
+   // 	 }
+   //     else
+   // 	 {
+   // 	   if(!digitBall1.empty())
+   // 	     {
+   // 	       listCriticalLambdas.insert(0);
+   // 	       for(auto const &p : digitBall1)
+   // 		 criticalBalls.setValue(p,b1);
+   // 	     }
+   // 	 }
+	       
+   //     //       std::cout << "nb critical values = " << listCriticalLambdas.size() << std::endl;
+       
+   //     // track lambda values of the pencil in increasing order
+   //     for(std::set<typename Kernel::FT>::iterator itL = listCriticalLambdas.begin() ; itL != listCriticalLambdas.end() ; itL++)
+   // 	 {
+   // 	   b = ballOnPencil<Kernel>(*itL,b1,b2);
+   // 	   orderedCriticalBalls.push_back(b); // add corresponding
+   // 					      // circle to the ordered list
+   // 	 }
+       
+       
+   //     // criticalBallsOnPencil.insert(std::make_pair(*it,listCriticalLambdas));      
+       
+   //   }
+
+
+   
+				    
+
+
+   
+  
+   
+   // std::unordered_map<typename DirectedGraph::vertex_descriptor,std::set<typename Kernel::FT > > criticalBallsOnPencil;
+   // // map associating a vertex x (source of a critical pencil) to an ordered set of lambda values
+   // // corresponding to critical balls on the critical pencil 
+
+   // typedef ImageContainerBySTLVector<Domain, Circle_2> CriticalBalls;
+   // CriticalBalls criticalBalls(domain);
+   
+   // for(auto const & p : obj)
+   //   {
+   //     typename DirectedGraph::vertex_descriptor desc1 = criticalPencils(p);
+       
+   //     Circle_2 b1,b2,b;
+   //     pencilFromVertex<Kernel,DirectedGraph>(desc1,dag,b1,b2);
+       
+   //     typename Kernel::FT lambda;
+   //     // std::cout << "p : " << p << " b1 : " << b1.center() << " " << b1.squared_radius() << " b2 : " << b2.center() << " " << b2.squared_radius() << std::endl;
+   //     if(b1 != b2)
+   // 	 {
+   // 	   Point_2 pp(p[0],p[1]);
+
+   // 	   lambda = computeLambdaOfCriticalBall<Kernel,DigitalSet>(pp,b1,b2);
+   // 	   //  std::cout << "lambda = " << lambda << std::endl;
+   // 	   if(lambda < 0 || lambda > 1)
+   // 	     {
+   // 	       std::cerr <<  "Lambda out of [0,1] interval !\n";
+   // 	       //return 0;
+   // 	     }
+   // 	   b = ballOnPencil<Kernel>(lambda,b1,b2);
+   // 	   //  std::cout << "critical ball = " << b << std::endl;
+	   
+   // 	   //std::cout << "\t" << power<Kernel>(b1,pp) << " " << power<Kernel>(b2,pp) << std::endl;
+   // 	   //lambda = computeLambda(pp,b1,b2);
+   // 	   // std::cout << "lambda = " << lambda << std::endl;
+   // 	   //b = ballOnPencil(lambda,b1,b2);
+   // 	   //std::cout << "critical ball = " << b << std::endl;
+   // 	 }
+   //     else
+   // 	 {
+   // 	   b = b1;
+   // 	   lambda = 0;
+   // 	   //std::cout << "root : " << b.center() << " " << b.squared_radius() << std::endl;
+   // 	 }
+
+   //     criticalBalls.setValue(p,b);
+       
+   //     // check if desc1 already appears as a source of a critical pencil
+   //     std::unordered_map<typename DirectedGraph::vertex_descriptor,std::set<typename Kernel::FT> >::iterator found = criticalBallsOnPencil.find(desc1);
+   //     // if desc1 was not found as the source of a critical pencil
+   //     if(found == criticalBallsOnPencil.end())
+   // 	 {
+   // 	   Kernel::FT t[] = {lambda}; // trick to construct a set with a unique element
+   // 	   criticalBallsOnPencil.insert(std::make_pair(desc1,std::set<typename Kernel::FT>(t,t+1)));
+   // 	 }
+   //     else
+   // 	 {
+   // 	   // found->second being a set, the values are kept ordered
+   // 	   (found->second).insert(lambda);
+   // 	 }
+   //   }
+
+
+   
+   // std::vector<Circle_2> orderedCriticalBalls;	      
+   // // track all vertices according to topological order (reverse order
+   // // of the dag)
+   // for(std::vector<typename DirectedGraph::vertex_descriptor>::reverse_iterator it = topologicalOrdering.rbegin() ; it != topologicalOrdering.rend() ; it++)
+   //   {
+   //     typename DirectedGraph::vertex_descriptor el = *it;	      
+       
+   //     // check if the vertex is the source of a critical pencil 
+   //     std::unordered_map<typename DirectedGraph::vertex_descriptor,std::set<typename Kernel::FT> >::iterator found = criticalBallsOnPencil.find(el);
+   //     // the pencil is critical for at least one point
+   //     if(found != criticalBallsOnPencil.end())
+   // 	 {
+   // 	   // for every ball that is critical on this pencil
+   // 	   for(auto const & l : found->second)
+   // 	     {
+   // 	       // compute pencil from found->first and dag
+   // 	       Circle_2 b1,b2;
+   // 	       pencilFromVertex<Kernel,DirectedGraph>(found->first,dag,b1,b2);
+	       
+   // 	       // compute ball of value l on this pencil
+   // 	       Circle_2 b;
+   // 	       b = ballOnPencil<Kernel>(l,b1,b2);
+   // 	       orderedCriticalBalls.push_back(b);
+   // 	       //      std::cout << "insert ball " << b << std::endl;
+   // 	     }
+   // 	 }
+   //   }
+   
+   // std::cout << "Number of critical balls = " << orderedCriticalBalls.size() << std::endl;
+   // trace.endBlock();
+
+   // // //*********************** Compute optimal cover *****************************//
+   
+   // // parcourir le vector orderedCriticalBalls
+   // // pour chaque boule, la discrétiser.
+   // // si elle contient un point de myset non marqué et si cette boule est critique pour ce point,
+   // // ajouter la boule à l'ensemble solution + marquer tous les points de la boule.
+
+   // std::cout << std::endl ; trace.beginBlock("Compute optimal cover");
+   
+   // DigitalSet unmarked(obj.pointSet());
+   // std::vector<Circle_2> optimalCover;
+
+   // // int n = orderedCriticalBalls.size();
+   // // for(int k = 0; k < n;k++)
+   // //   {
+   // //     Circle b = orderedCriticalBalls[k];
+   // //     if(k != n-1)
+       
+   // //   }
+
+   // n = orderedCriticalBalls.size();
+
+   // i = 0;
+   // // track all critical balls
+   // for(auto const & b : orderedCriticalBalls)
+   //   {
+
+   //     std::cout << i << "/" << n << "\r";
+   //     std::cout.flush();
+   //     i++;
+   //     // std::cout << b << std::endl;
+   //     DigitalSet digit = digitize<Kernel,DigitalSet>(b);
+   //     bool found = false;
+       
+   //     for(auto const & p : digit)
+   // 	 {
+   // 	   // std::cout << p << std::endl;
+   // 	   if(unmarked(p) && b == criticalBalls(p))
+   // 	     {
+   // 	       found = true;
+   // 	       optimalCover.push_back(b);
+   // 	       //std::cout << b << std::endl;
+   // 	       break;
+   // 	     }
+   // 	 }
+   //     if(found) // a ball has been added, update unmarked set
+   // 	 for(auto const & p : digit)
+   // 	   if(unmarked(p))
+   // 	     unmarked.erase(p);
+      
+   //     //  if(unmarked.size() !=0)
+   //     //std::cout << *(unmarked.begin());
+   //   }
+   // std::cout << "number unmarked = " << unmarked.size() << std::endl;
+   // std::cout << "Number of balls = " << optimalCover.size() << std::endl;
+
+   // trace.endBlock();
+   
+   board.clear();
+   board << domain;
+   //board.setFillColorRGBi(1,1,1,1);
+
+   Z2i::Point p;
+   //board << 
+				       // Board2D::Shape::SolidStyle,
+                                       //Board2D::Shape::RoundCap,
+                                       //Board2D::Shape::RoundJoin ))
+   for(auto const & p :obj)
+     board << CustomStyle( p.className(), 
+			   new CustomPen( Color(180,180,180), Color(210,210,210), 1.0)) << p;
+   //board << obj;
+   board.setLineWidth(2.0);
+   board.setPenColor( DGtal::Color::Green );
+   board.setPenColorRGBi(50,205,50 );
+   for(auto const & seg : croppedVD)
+     board.drawLine(seg[0].x().floatValue(),seg[0].y().floatValue(),seg[1].x().floatValue(),seg[1].y().floatValue());
+   board.setPenColor(DGtal::Color::Red);
+  
+   board.setFillColor(DGtal::Color::None);
+   for(auto const & b : optimalCover)
+     board.drawCircle(b.center().x().floatValue(), b.center().y().floatValue(), sqrt(b.squared_radius().floatValue()));
+  
+
+   board.saveEPS("optimalCover.eps");
+		      
+		      
+         
+}
+

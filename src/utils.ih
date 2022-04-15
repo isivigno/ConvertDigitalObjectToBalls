@@ -1,0 +1,69 @@
+
+
+
+//Retourne le nombre de diviseurs de N
+template <typename TInteger>
+TInteger numberOfPrimeFactors(TInteger n) {
+     TInteger i=2,j;
+     TInteger r=floor(sqrt(n));
+     for(j=2; j<=r;j++) if(n % j == 0) i++;
+     return i;
+}
+
+// N est premier si le nombre de diviseur est 2
+template <typename TInteger>
+bool isPrime(TInteger n) {
+    return (numberOfPrimeFactors<TInteger>(n)==2);
+}
+
+//  retourne un vecteur de couple avec pour 1ère coordonnée le diviseur 
+//  premier et la seconde sa puissance 
+template <typename TInteger>
+typename std::vector<std::pair<TInteger,TInteger>> productOPrimeFactors(TInteger N){
+  /*un vecteur de pairs d'entiers */
+  typename std::vector<std::pair<TInteger,TInteger>> PrimeFactors;
+  /*pair d'entiers*/
+  typename std::pair<TInteger,TInteger> b;
+  TInteger fi, sec ;
+  for(TInteger i=2;i<=N;i++){
+    if(isPrime<TInteger>(i)){
+      sec = 0;
+      while(N%i ==0){
+	fi = i; // recuperer le diviseur premier
+	sec ++; // la puissance du diviseur premier
+	N = N / i;
+      }
+      if(sec!=0){
+	b.first = i; // diviseur
+	b.second = sec; // puissance du diviseur
+	PrimeFactors.push_back(b);
+      }
+    }
+  }
+  return PrimeFactors;
+}
+//retourne vrai si le diviseur premier de N de la forme 4k+3 est de 
+//  puissance pair , faux sinon
+template <typename TInteger>
+bool isSumOfTwoSquares(TInteger n){
+  typename std::vector<std::pair<TInteger,TInteger>> b;
+  b = productOPrimeFactors<TInteger>(n);
+  for(typename std::vector<std::pair<TInteger,TInteger>>::const_iterator it = b.begin(); it!= b.end();it++){
+    // teste si un diviseur premier s'écrit 4k+3 et sa puissance paire
+    if((it->first % 4 == 3) && (it->second % 2 != 0) ) {
+      return false;
+    }
+  }
+  return true;
+}
+// retourne l'entier qui s'écrit comme somme de deux carrés précédent n
+template <typename TInteger>
+TInteger prev(TInteger n){
+	TInteger i = n-1;
+	while(i!=0){
+	  if(isSumOfTwoSquares(i))
+	    return i ;
+	  i--;
+	}
+	return 0;
+}
